@@ -1,0 +1,11 @@
+build/
+build-cmake/
+dist/
+*.obj
+*.pdb
+*.ilk
+*.log
+*.zip
+out_*.txt
+err_*.txt
+tty_*.txt
