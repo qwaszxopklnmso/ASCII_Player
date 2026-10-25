@@ -16,8 +16,16 @@ struct RGB {
 
 enum class ColorMode { Mono, Ansi256, TrueColor };
 
+// Light-to-dark default ramp, ordered by measured glyph coverage.
+inline constexpr const char kDefaultCharset[] =
+    " `.'-:,_\"^~;!><+=/\\|"
+    "r*L?(c)Tv7Jz]iY1Fxls"
+    "fInu{C[2te}oZj3ayE5V"
+    "4kPwhSmAUXK69bdqpGO#"
+    "RD%8HMWB0$g&NQ@";
+
 struct RenderSettings {
-    std::string charset = " .:-=+*#%@";
+    std::string charset = kDefaultCharset;
     double gamma = 0.85;
     double colorGain = 1.0;
     bool invert = false;

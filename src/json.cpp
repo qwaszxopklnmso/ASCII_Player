@@ -132,7 +132,7 @@ public:
         check(scene.height > 0 && scene.height <= 300, "JSON scene has an invalid height.");
         check(!scene.frames.empty(), "JSON scene contains no frames.");
         check(scene.fps > 0.0 && scene.fps <= 240.0, "JSON scene has an invalid fps.");
-        if (scene.charset.empty()) scene.charset = " .:-=+*#%@";
+        if (scene.charset.empty()) scene.charset = kDefaultCharset;
         bool anyColors = !iequals(scene.colorMode, "mono");
         double lastTime = 0.0;
         for (size_t i = 0; i < scene.frames.size(); ++i) {

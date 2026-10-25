@@ -6,6 +6,8 @@
 
 ![纯音频频谱预览](docs/preview_audio.png)
 
+> 预览图使用经典 ` .:-=+*#%@` 字符梯度；默认字符集包含更多符号、数字和大小写字母。
+
 ## 快速开始
 
 直接运行 exe，把媒体文件拖进窗口或输入路径：
@@ -29,7 +31,7 @@ dist\ASCIIPlayer.exe samples\demo.mp4 --width 120 --chars " .:-=+*#%@"
 ## 功能
 
 - **MP4 / M4A / M4S**：以及 FFmpeg 能解码的其它格式。
-- **亮度 → 字符**：默认字符梯度 ` .:-=+*#%@`，可用 `--chars` 换成任意由疏到密的可打印 ASCII。
+- **亮度 → 字符**：默认字符梯度包含符号、数字、大小写字母（约 95 个字符），全部按疏密排列；可用 `--chars` 换成任意由疏到密的可打印 ASCII。
 - **彩色**：默认 ANSI 256 色；`--color truecolor` 开启 24-bit 前景色，`mono` 关闭颜色。
 - **终端自适应**：按当前终端大小和视频宽高比计算字符网格。
 - **音画同步**：音频解码成 48 kHz 双声道 PCM，`waveOut` 流式播放，画面以音频播放位置为时钟。
@@ -48,7 +50,7 @@ dist\ASCIIPlayer.exe samples\demo.mp4 --width 120 --chars " .:-=+*#%@"
 # 指定宽度（高度自动按画面比例算）
 ASCIIPlayer.exe movie.mp4 --width 100
 
-# 自定义字符梯度（从最暗到最亮）
+# 自定义字符梯度（从疏到密）
 ASCIIPlayer.exe movie.mp4 --chars " .#%@" --color truecolor
 
 # 纯音频频谱
@@ -142,13 +144,19 @@ JSON 结构是公开的，见文件头部：
 
 `c` 是每一行的字符，`p` 是每格两位十六进制的 xterm 颜色索引。
 
+上面的 `charset` 只是经典 10 字符示例；默认导出会写入完整的约 95 字符梯度。想恢复这种简洁画面：
+
+```powershell
+ASCIIPlayer.exe movie.mp4 --chars " .:-=+*#%@"
+```
+
 ## 选项
 
 | 选项 | 含义 |
 | --- | --- |
 | `--width N` | 字符列数；默认适配终端 |
 | `--height N` | 字符行数；默认按宽高比计算 |
-| `--chars " .#%@"` | 自定义从疏到密的字符表 |
+| `--chars " .#%@"` | 自定义从疏到密的字符表；默认约 95 个字符 |
 | `--fps N` | 播放/导出帧率，默认源帧率，上限 30 |
 | `--color truecolor\|ansi256\|mono` | 颜色模式，默认 `ansi256` |
 | `--gamma N` | 亮度伽马，默认 0.85，越小整体越亮 |

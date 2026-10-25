@@ -34,7 +34,7 @@
 namespace ap {
 namespace {
 
-constexpr const char* kVersion = "1.1.1";
+constexpr const char* kVersion = "1.1.2";
 std::atomic<bool> g_stop{false};
 
 BOOL WINAPI consoleCtrlHandler(DWORD type) {
@@ -155,7 +155,7 @@ struct Options {
     double gamma = 0.85;
     double gain = 1.0;
     int maxFrames = 0;
-    std::string charset = " .:-=+*#%@";
+    std::string charset = kDefaultCharset;
     ColorMode colorMode = ColorMode::Ansi256;
 };
 
@@ -187,7 +187,7 @@ void printHelp() {
         "常用选项:\n"
         "  --width N              ASCII 宽度（列），默认自动适配终端\n"
         "  --height N             ASCII 高度（行），默认按画面比例计算\n"
-        "  --chars \" .#%@\"       自定义由疏到密的字符表\n"
+        "  --chars STR            自定义由疏到密的字符表（默认含符号、数字、大小写字母）\n"
         "  --fps N                播放/导出帧率（默认源帧率，最高 30）\n"
         "  --color MODE           truecolor | ansi256（默认） | mono\n"
         "  --gamma N              亮度伽马（默认 0.85，越小越亮）\n"
@@ -279,7 +279,7 @@ double parseTime(const std::string& text, const std::string& option) {
 
 void validateCharset(const std::string& charset) {
     check(charset.size() >= 2, "--chars needs at least two characters.");
-    check(charset.size() <= 64, "--chars is limited to 64 characters.");
+    check(charset.size() <= 128, "--chars is limited to 128 characters.");
     for (unsigned char c : charset) {
         check(c >= 32 && c <= 126, "--chars must contain printable ASCII characters only.");
     }

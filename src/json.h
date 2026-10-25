@@ -18,7 +18,7 @@ struct SceneFrame {
 
 struct Scene {
     std::string source;
-    std::string charset = " .:-=+*#%@";
+    std::string charset = kDefaultCharset;
     std::string colorMode = "ansi256";
     int width = 0;
     int height = 0;
