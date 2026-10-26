@@ -41,7 +41,7 @@
 namespace ap {
 namespace {
 
-constexpr const char* kVersion = "1.2.0";
+constexpr const char* kVersion = "1.2.1";
 std::atomic<bool> g_stop{false};
 
 #ifdef _WIN32

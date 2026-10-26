@@ -102,7 +102,6 @@ private:
 
     pid_t process_ = -1;
     bool processExited_ = false;
-    int processStatus_ = 0;
     std::chrono::steady_clock::time_point startTime_;
 #endif
     const WavData* audio_ = nullptr;

@@ -41,6 +41,21 @@ sudo apt install -y ffmpeg pulseaudio-utils
 
 WSL2 的 WSLg 已经提供 PulseAudio 服务，`PULSE_SERVER` 通常会自动指向 `/mnt/wslg/PulseServer`。
 
+#### Termux / Android
+
+Termux 里可以装 `clang` 和 `ffmpeg`，然后从源码编译；不要用 `STATIC=1`，Android 的 bionic 不支持 glibc 静态链接：
+
+```bash
+pkg update
+pkg install clang ffmpeg
+git clone https://github.com/qwaszxopklnmso/ASCII_Player.git
+cd ASCII_Player
+./build-linux.sh
+./build-linux/ascii-player samples/demo.mp4
+```
+
+Termux 没有 `paplay` 时通常会自动静音；需要声音可以装带 `ffplay` 的 FFmpeg 包，或使用 Termux 的音频播放工具。
+
 下载 Release 里的 `ASCIIPlayer-linux-x86_64.tar.gz`，解压后运行：
 
 ```bash
@@ -271,7 +286,7 @@ ASCIIPlayer.exe video.m4s --init init-video.mp4 --audio audio.m4s --audio-init i
 
 ### Linux / WSL
 
-只需要 `g++` 和支持 C++17 的标准库。Ubuntu / WSL：
+只需要 `g++` 或 `clang++`，以及支持 C++17 的标准库。Ubuntu / WSL：
 
 ```bash
 sudo apt update

@@ -7,7 +7,17 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-CXX="${CXX:-g++}"
+CXX="${CXX:-}"
+if [[ -z "$CXX" ]]; then
+    if command -v g++ >/dev/null 2>&1; then
+        CXX=g++
+    elif command -v clang++ >/dev/null 2>&1; then
+        CXX=clang++
+    else
+        echo "No C++ compiler found. Install g++ or clang." >&2
+        exit 1
+    fi
+fi
 OUT="${OUT:-build-linux/ascii-player}"
 STATIC="${STATIC:-0}"
 if [[ "${1:-}" == "--static" ]]; then

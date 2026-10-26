@@ -10,7 +10,6 @@
 #include <cerrno>
 #include <csignal>
 #include <fcntl.h>
-#include <spawn.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -405,24 +404,61 @@ bool WaveOutPlayer::spawnPlayer(const fs::path& exe,
     for (auto& item : command) argv.push_back(item.data());
     argv.push_back(nullptr);
 
-    posix_spawn_file_actions_t actions;
-    int rc = posix_spawn_file_actions_init(&actions);
-    if (rc != 0) {
-        error = std::string("could not initialize spawn: ") + std::strerror(rc);
+    int errorPipe[2] = {-1, -1};
+    if (::pipe(errorPipe) != 0) {
+        error = std::string("could not create exec pipe: ") + std::strerror(errno);
         return false;
     }
-    posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0);
-    posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, "/dev/null", O_WRONLY, 0);
-    posix_spawn_file_actions_addopen(&actions, STDERR_FILENO, "/dev/null", O_WRONLY, 0);
 
-    pid_t child = -1;
-    rc = posix_spawn(&child, command.front().c_str(), &actions, nullptr, argv.data(),
-                     environ);
-    posix_spawn_file_actions_destroy(&actions);
-    if (rc != 0) {
-        error = std::string(std::strerror(rc));
+    pid_t child = ::fork();
+    if (child < 0) {
+        int forkError = errno;
+        ::close(errorPipe[0]);
+        ::close(errorPipe[1]);
+        error = std::string("could not fork: ") + std::strerror(forkError);
         return false;
     }
+
+    if (child == 0) {
+        ::close(errorPipe[0]);
+        int devnull = ::open("/dev/null", O_RDWR);
+        if (devnull < 0) {
+            int openError = errno;
+            ssize_t ignored = ::write(errorPipe[1], &openError, sizeof(openError));
+            (void)ignored;
+            _exit(127);
+        }
+        ::dup2(devnull, STDIN_FILENO);
+        ::dup2(devnull, STDOUT_FILENO);
+        ::dup2(devnull, STDERR_FILENO);
+        if (devnull > STDERR_FILENO) ::close(devnull);
+
+        // Close the error pipe automatically only if execve() succeeds.
+        ::fcntl(errorPipe[1], F_SETFD, ::fcntl(errorPipe[1], F_GETFD) | FD_CLOEXEC);
+        ::execv(command.front().c_str(), argv.data());
+
+        int execError = errno;
+        ssize_t ignored = ::write(errorPipe[1], &execError, sizeof(execError));
+        (void)ignored;
+        _exit(127);
+    }
+
+    ::close(errorPipe[1]);
+    int execError = 0;
+    ssize_t got = 0;
+    do {
+        got = ::read(errorPipe[0], &execError, sizeof(execError));
+    } while (got < 0 && errno == EINTR);
+    ::close(errorPipe[0]);
+
+    if (got > 0) {
+        int status = 0;
+        while (::waitpid(child, &status, 0) < 0 && errno == EINTR) {
+        }
+        error = std::strerror(execError);
+        return false;
+    }
+
     process_ = child;
     return true;
 }
@@ -435,7 +471,6 @@ bool WaveOutPlayer::start(const WavData& audio, std::string& error) {
     closed_ = false;
     lastPosition_ = 0.0;
     processExited_ = false;
-    processStatus_ = 0;
     sinkName_.clear();
 
     if (audio.path().empty()) {
@@ -490,7 +525,6 @@ void WaveOutPlayer::pump() {
         pid_t got = ::waitpid(process_, &status, WNOHANG);
         if (got == process_) {
             processExited_ = true;
-            processStatus_ = status;
             if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) failed_ = true;
         }
     }
@@ -520,7 +554,6 @@ void WaveOutPlayer::close() {
             pid_t got = ::waitpid(process_, &status, WNOHANG);
             if (got == process_) {
                 processExited_ = true;
-                processStatus_ = status;
                 break;
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -531,12 +564,10 @@ void WaveOutPlayer::close() {
             while (::waitpid(process_, &status, 0) < 0 && errno == EINTR) {
             }
             processExited_ = true;
-            processStatus_ = status;
         }
     }
     process_ = -1;
     processExited_ = false;
-    processStatus_ = 0;
     started_ = false;
 }
 

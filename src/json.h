@@ -45,8 +45,6 @@ private:
     fs::path path_;
     int width_ = 0;
     int height_ = 0;
-    double fps_ = 30.0;
-    double duration_ = 0.0;
     std::string source_;
     std::string charset_;
     std::string colorMode_;

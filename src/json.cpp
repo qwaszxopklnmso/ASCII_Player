@@ -468,8 +468,6 @@ SceneWriter::SceneWriter(const fs::path& path, int width, int height, double fps
     : path_(path),
       width_(width),
       height_(height),
-      fps_(fps),
-      duration_(duration),
       source_(source),
       charset_(charset),
       colorMode_(colorMode) {
