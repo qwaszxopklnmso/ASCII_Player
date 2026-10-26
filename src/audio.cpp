@@ -3,7 +3,20 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+
+#ifdef _WIN32
 #include <mmsystem.h>
+#else
+#include <cerrno>
+#include <csignal>
+#include <fcntl.h>
+#include <spawn.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
+#include <thread>
+#include <unistd.h>
+#endif
 
 namespace ap {
 
@@ -18,6 +31,7 @@ uint16_t readLe16(const uint8_t* p) {
     return static_cast<uint16_t>(p[0] | (p[1] << 8));
 }
 
+#ifdef _WIN32
 std::string waveOutError(MMRESULT result) {
     switch (result) {
         case MMSYSERR_NODRIVER:
@@ -32,6 +46,7 @@ std::string waveOutError(MMRESULT result) {
             return "waveOut error " + std::to_string(static_cast<unsigned>(result));
     }
 }
+#endif
 
 }  // namespace
 
@@ -40,9 +55,16 @@ WavData::~WavData() {
 }
 
 WavData::WavData(WavData&& other) noexcept
-    : file_(other.file_),
+    : path_(std::move(other.path_)),
+#ifdef _WIN32
+      file_(other.file_),
       mapping_(other.mapping_),
       view_(other.view_),
+#else
+      fd_(other.fd_),
+      map_(other.map_),
+      mapSize_(other.mapSize_),
+#endif
       data_(other.data_),
       dataBytes_(other.dataBytes_),
       sampleRate_(other.sampleRate_),
@@ -50,9 +72,15 @@ WavData::WavData(WavData&& other) noexcept
       bitsPerSample_(other.bitsPerSample_),
       blockAlign_(other.blockAlign_),
       frameCount_(other.frameCount_) {
+#ifdef _WIN32
     other.file_ = nullptr;
     other.mapping_ = nullptr;
     other.view_ = nullptr;
+#else
+    other.fd_ = -1;
+    other.map_ = nullptr;
+    other.mapSize_ = 0;
+#endif
     other.data_ = nullptr;
     other.dataBytes_ = 0;
 }
@@ -60,9 +88,22 @@ WavData::WavData(WavData&& other) noexcept
 WavData& WavData::operator=(WavData&& other) noexcept {
     if (this != &other) {
         close();
+        path_ = std::move(other.path_);
+#ifdef _WIN32
         file_ = other.file_;
         mapping_ = other.mapping_;
         view_ = other.view_;
+        other.file_ = nullptr;
+        other.mapping_ = nullptr;
+        other.view_ = nullptr;
+#else
+        fd_ = other.fd_;
+        map_ = other.map_;
+        mapSize_ = other.mapSize_;
+        other.fd_ = -1;
+        other.map_ = nullptr;
+        other.mapSize_ = 0;
+#endif
         data_ = other.data_;
         dataBytes_ = other.dataBytes_;
         sampleRate_ = other.sampleRate_;
@@ -70,9 +111,6 @@ WavData& WavData::operator=(WavData&& other) noexcept {
         bitsPerSample_ = other.bitsPerSample_;
         blockAlign_ = other.blockAlign_;
         frameCount_ = other.frameCount_;
-        other.file_ = nullptr;
-        other.mapping_ = nullptr;
-        other.view_ = nullptr;
         other.data_ = nullptr;
         other.dataBytes_ = 0;
     }
@@ -80,6 +118,7 @@ WavData& WavData::operator=(WavData&& other) noexcept {
 }
 
 void WavData::close() {
+#ifdef _WIN32
     if (view_) {
         UnmapViewOfFile(view_);
         view_ = nullptr;
@@ -93,11 +132,25 @@ void WavData::close() {
         CloseHandle(file_);
     }
     file_ = nullptr;
+#else
+    if (map_ && map_ != MAP_FAILED && mapSize_ > 0) {
+        munmap(map_, mapSize_);
+        map_ = nullptr;
+        mapSize_ = 0;
+    }
+    if (fd_ >= 0) {
+        ::close(fd_);
+        fd_ = -1;
+    }
+    data_ = nullptr;
+#endif
     dataBytes_ = 0;
 }
 
 void WavData::open(const fs::path& path) {
     close();
+    path_ = path;
+#ifdef _WIN32
     file_ = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
                         OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     check(file_ != INVALID_HANDLE_VALUE,
@@ -113,6 +166,19 @@ void WavData::open(const fs::path& path) {
     view_ = base;
     data_ = base;
     size_t total = static_cast<size_t>(size.QuadPart);
+#else
+    fd_ = ::open(path.c_str(), O_RDONLY);
+    check(fd_ >= 0, "Could not open extracted audio: " + pathToUtf8(path));
+    struct stat st {};
+    check(::fstat(fd_, &st) == 0, "Could not stat extracted audio.");
+    check(st.st_size >= 44, "Extracted audio file is empty.");
+    mapSize_ = static_cast<size_t>(st.st_size);
+    map_ = mmap(nullptr, mapSize_, PROT_READ, MAP_PRIVATE, fd_, 0);
+    check(map_ != MAP_FAILED, "Could not map extracted audio.");
+    const uint8_t* base = static_cast<const uint8_t*>(map_);
+    data_ = base;
+    size_t total = mapSize_;
+#endif
 
     check(total >= 12 && std::memcmp(base, "RIFF", 4) == 0 &&
               std::memcmp(base + 8, "WAVE", 4) == 0,
@@ -167,6 +233,8 @@ void WavData::monoWindow(double startSeconds, int sampleCount,
         out[static_cast<size_t>(i)] = sum / static_cast<float>(channels_);
     }
 }
+
+#ifdef _WIN32
 
 WaveOutPlayer::~WaveOutPlayer() {
     close();
@@ -317,5 +385,168 @@ void WaveOutPlayer::stop() {
     readOffset_ = 0;
     lastPosition_ = 0.0;
 }
+
+#else  // POSIX: play the extracted WAV through a small command-line player.
+
+WaveOutPlayer::~WaveOutPlayer() {
+    close();
+}
+
+bool WaveOutPlayer::spawnPlayer(const fs::path& exe,
+                                const std::vector<std::string>& args,
+                                std::string& error) {
+    std::vector<std::string> command;
+    command.reserve(args.size() + 1);
+    command.push_back(pathToUtf8(exe));
+    command.insert(command.end(), args.begin(), args.end());
+
+    std::vector<char*> argv;
+    argv.reserve(command.size() + 1);
+    for (auto& item : command) argv.push_back(item.data());
+    argv.push_back(nullptr);
+
+    posix_spawn_file_actions_t actions;
+    int rc = posix_spawn_file_actions_init(&actions);
+    if (rc != 0) {
+        error = std::string("could not initialize spawn: ") + std::strerror(rc);
+        return false;
+    }
+    posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0);
+    posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, "/dev/null", O_WRONLY, 0);
+    posix_spawn_file_actions_addopen(&actions, STDERR_FILENO, "/dev/null", O_WRONLY, 0);
+
+    pid_t child = -1;
+    rc = posix_spawn(&child, command.front().c_str(), &actions, nullptr, argv.data(),
+                     environ);
+    posix_spawn_file_actions_destroy(&actions);
+    if (rc != 0) {
+        error = std::string(std::strerror(rc));
+        return false;
+    }
+    process_ = child;
+    return true;
+}
+
+bool WaveOutPlayer::start(const WavData& audio, std::string& error) {
+    stop();
+    audio_ = &audio;
+    started_ = false;
+    failed_ = false;
+    closed_ = false;
+    lastPosition_ = 0.0;
+    processExited_ = false;
+    processStatus_ = 0;
+    sinkName_.clear();
+
+    if (audio.path().empty()) {
+        error = "Audio disabled: the extracted WAV path is unavailable.";
+        failed_ = true;
+        return false;
+    }
+    const std::string wav = pathToUtf8(audio.path());
+
+    struct Candidate {
+        const char* name;
+        std::vector<std::string> args;
+    };
+    const std::vector<Candidate> candidates = {
+        {"paplay", {wav}},
+        {"pw-play", {wav}},
+        {"aplay", {"-q", wav}},
+        {"ffplay", {"-nodisp", "-autoexit", "-loglevel", "quiet", wav}},
+        {"mpv", {"--no-video", "--really-quiet", wav}},
+        {"play", {"-q", wav}},
+        {"cvlc", {"--play-and-exit", "--quiet", wav}},
+    };
+
+    std::string lastError;
+    for (const auto& candidate : candidates) {
+        fs::path exe = findInPath(utf8ToWide(candidate.name));
+        if (exe.empty()) continue;
+        std::string spawnError;
+        if (spawnPlayer(exe, candidate.args, spawnError)) {
+            sinkName_ = candidate.name;
+            startTime_ = std::chrono::steady_clock::now();
+            started_ = true;
+            return true;
+        }
+        lastError = candidate.name;
+        if (!spawnError.empty()) lastError += ": " + spawnError;
+    }
+
+    failed_ = true;
+    error =
+        "Audio disabled: no command-line audio player found"
+        + (lastError.empty() ? std::string(".") : " (" + lastError + ").") +
+        "\n  Install pulseaudio-utils (paplay), pipewire-bin (pw-play), "
+        "alsa-utils (aplay), ffmpeg (ffplay), or mpv.";
+    return false;
+}
+
+void WaveOutPlayer::pump() {
+    if (!started_ || closed_ || !audio_) return;
+    if (process_ > 0 && !processExited_) {
+        int status = 0;
+        pid_t got = ::waitpid(process_, &status, WNOHANG);
+        if (got == process_) {
+            processExited_ = true;
+            processStatus_ = status;
+            if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) failed_ = true;
+        }
+    }
+    double elapsed = std::chrono::duration<double>(
+                         std::chrono::steady_clock::now() - startTime_)
+                         .count();
+    lastPosition_ = std::min(std::max(0.0, elapsed), audio_->duration());
+}
+
+bool WaveOutPlayer::finished() const {
+    if (!audio_ || !started_) return true;
+    if (processExited_ || failed_) return true;
+    return lastPosition_ >= audio_->duration();
+}
+
+double WaveOutPlayer::positionSeconds() const {
+    return lastPosition_;
+}
+
+void WaveOutPlayer::close() {
+    if (closed_) return;
+    closed_ = true;
+    if (process_ > 0 && !processExited_) {
+        ::kill(process_, SIGTERM);
+        for (int i = 0; i < 100; ++i) {
+            int status = 0;
+            pid_t got = ::waitpid(process_, &status, WNOHANG);
+            if (got == process_) {
+                processExited_ = true;
+                processStatus_ = status;
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        if (!processExited_) {
+            ::kill(process_, SIGKILL);
+            int status = 0;
+            while (::waitpid(process_, &status, 0) < 0 && errno == EINTR) {
+            }
+            processExited_ = true;
+            processStatus_ = status;
+        }
+    }
+    process_ = -1;
+    processExited_ = false;
+    processStatus_ = 0;
+    started_ = false;
+}
+
+void WaveOutPlayer::stop() {
+    close();
+    audio_ = nullptr;
+    lastPosition_ = 0.0;
+    sinkName_.clear();
+}
+
+#endif
 
 }  // namespace ap

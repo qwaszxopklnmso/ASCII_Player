@@ -2,8 +2,13 @@
 
 #include "common.h"
 
+#ifdef _WIN32
 #include <mmsystem.h>
+#else
+#include <sys/types.h>
+#endif
 
+#include <chrono>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -31,6 +36,7 @@ public:
     }
     const uint8_t* data() const { return data_; }
     size_t dataBytes() const { return dataBytes_; }
+    const fs::path& path() const { return path_; }
 
     // Mixes a window of signed 16-bit samples to mono floats in [-1, 1].
     void monoWindow(double startSeconds, int sampleCount, std::vector<float>& out) const;
@@ -38,9 +44,16 @@ public:
 private:
     void close();
 
+    fs::path path_;
+#ifdef _WIN32
     HANDLE file_ = nullptr;
     HANDLE mapping_ = nullptr;
     const uint8_t* view_ = nullptr;
+#else
+    int fd_ = -1;
+    void* map_ = nullptr;
+    size_t mapSize_ = 0;
+#endif
     const uint8_t* data_ = nullptr;
     size_t dataBytes_ = 0;
     int sampleRate_ = 0;
@@ -65,8 +78,10 @@ public:
     bool finished() const;
     double positionSeconds() const;
     double durationSeconds() const { return audio_ ? audio_->duration() : 0.0; }
+    const std::string& sinkName() const { return sinkName_; }
 
 private:
+#ifdef _WIN32
     struct Buffer {
         std::vector<uint8_t> bytes;
         WAVEHDR header{};
@@ -77,10 +92,21 @@ private:
     size_t fillBuffer(Buffer& buffer);
 
     HWAVEOUT device_ = nullptr;
-    const WavData* audio_ = nullptr;
     std::vector<Buffer> buffers_;
     size_t readOffset_ = 0;
     size_t queued_ = 0;
+#else
+    void close();
+    bool spawnPlayer(const fs::path& exe, const std::vector<std::string>& args,
+                     std::string& error);
+
+    pid_t process_ = -1;
+    bool processExited_ = false;
+    int processStatus_ = 0;
+    std::chrono::steady_clock::time_point startTime_;
+#endif
+    const WavData* audio_ = nullptr;
+    std::string sinkName_;
     bool started_ = false;
     bool failed_ = false;
     bool closed_ = false;

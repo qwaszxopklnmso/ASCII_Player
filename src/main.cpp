@@ -5,14 +5,18 @@
 #include "process.h"
 #include "render.h"
 
+#ifdef _WIN32
 #include <mmsystem.h>
 #include <windows.h>
+#include <conio.h>
+#include <io.h>
+#endif
 
 #include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
-#include <conio.h>
+#include <csignal>
 #include <cctype>
 #include <cwctype>
 #include <cstdio>
@@ -20,7 +24,6 @@
 #include <cstring>
 #include <deque>
 #include <fstream>
-#include <io.h>
 #include <iomanip>
 #include <iostream>
 #include <iterator>
@@ -31,12 +34,17 @@
 #include <thread>
 #include <vector>
 
+#ifndef _WIN32
+#include <unistd.h>
+#endif
+
 namespace ap {
 namespace {
 
-constexpr const char* kVersion = "1.1.2";
+constexpr const char* kVersion = "1.2.0";
 std::atomic<bool> g_stop{false};
 
+#ifdef _WIN32
 BOOL WINAPI consoleCtrlHandler(DWORD type) {
     if (type == CTRL_C_EVENT || type == CTRL_BREAK_EVENT || type == CTRL_CLOSE_EVENT ||
         type == CTRL_LOGOFF_EVENT || type == CTRL_SHUTDOWN_EVENT) {
@@ -45,7 +53,13 @@ BOOL WINAPI consoleCtrlHandler(DWORD type) {
     }
     return FALSE;
 }
+#else
+void posixSignalHandler(int) {
+    g_stop = true;
+}
+#endif
 
+#ifdef _WIN32
 bool environmentHas(const wchar_t* name) {
     wchar_t buffer[8];
     DWORD length = GetEnvironmentVariableW(name, buffer,
@@ -127,6 +141,23 @@ bool launchInWindowsTerminal(int argc, wchar_t** argv) {
     CloseHandle(pi.hProcess);
     return true;
 }
+#endif
+
+bool stdinIsTty() {
+#ifdef _WIN32
+    return _isatty(_fileno(stdin)) != 0;
+#else
+    return isatty(STDIN_FILENO) != 0;
+#endif
+}
+
+bool stderrIsTty() {
+#ifdef _WIN32
+    return _isatty(_fileno(stderr)) != 0;
+#else
+    return isatty(STDERR_FILENO) != 0;
+#endif
+}
 
 struct Options {
     std::string rawInput;
@@ -178,52 +209,69 @@ void printBanner() {
 
 void printHelp() {
     printBanner();
+    std::string help = R"HELP(用法 / Usage:
+  {EXE} <媒体文件> [选项]
+  {EXE} <媒体文件> --export-json scene.json [选项]
+  {EXE} --play-json scene.json [选项]
+
+常用选项:
+  --width N              ASCII 宽度（列），默认自动适配终端
+  --height N             ASCII 高度（行），默认按画面比例计算
+  --chars STR            自定义由疏到密的字符表（默认含符号、数字、大小写字母）
+  --fps N                播放/导出帧率（默认源帧率，最高 30）
+  --color MODE           truecolor | ansi256（默认） | mono
+  --gamma N              亮度伽马（默认 0.85，越小越亮）
+  --gain N               颜色增益（默认 1.0）
+  --invert               反转明暗
+  --no-audio             关闭声音（纯音频仍显示频谱）
+  --start SEC            从指定时间开始，支持 1:23.5
+  --duration SEC         只播放/导出指定时长
+  --loop                 循环播放
+  --init PATH            .m4s/fMP4 的初始化分片 init_0.mp4
+  --audio PATH           使用单独音轨；也可给 JSON 场景配同步声音
+  --audio-init PATH      单独音轨 .m4s 的初始化分片
+  --export-json PATH     导出可离线回放的彩色 JSON 场景
+  --play-json PATH       回放 JSON 场景
+  --full                 使用终端全部行列（默认最多 300 列，性能优先）
+  --no-wt                不自动切换到 Windows Terminal（仅 Windows）
+  --plain                无光标控制、无颜色（便于重定向）
+  --no-alt-screen        不使用备用屏幕
+  --stats                显示实际帧率、丢帧数与绘制耗时
+  --max-frames N         只渲染 N 帧（调试/截图）
+  -h, --help             显示帮助
+  -v, --version          显示版本
+
+示例:
+  {EXE} movie.mp4
+  {EXE} movie.mp4 --width 100 --chars " .:-=+*#%@"
+  {EXE} music.m4a --color truecolor
+  {EXE} clip.m4s --init init_0.mp4 --audio audio.m4a
+  {EXE} movie.mp4 --export-json movie.json --fps 24
+  {EXE} --play-json movie.json
+  {EXE} --play-json movie.json --audio movie.mp4
+
+播放中按 Q / Esc / Ctrl+C 退出。
+)HELP";
+
+    std::string exe = programName();
+    size_t at = 0;
+    while ((at = help.find("{EXE}", at)) != std::string::npos) {
+        help.replace(at, 5, exe);
+        at += exe.size();
+    }
+    std::cout << help;
+#ifdef _WIN32
     std::cout <<
-        "用法 / Usage:\n"
-        "  ASCIIPlayer.exe <媒体文件> [选项]\n"
-        "  ASCIIPlayer.exe <媒体文件> --export-json scene.json [选项]\n"
-        "  ASCIIPlayer.exe --play-json scene.json [选项]\n"
-        "\n"
-        "常用选项:\n"
-        "  --width N              ASCII 宽度（列），默认自动适配终端\n"
-        "  --height N             ASCII 高度（行），默认按画面比例计算\n"
-        "  --chars STR            自定义由疏到密的字符表（默认含符号、数字、大小写字母）\n"
-        "  --fps N                播放/导出帧率（默认源帧率，最高 30）\n"
-        "  --color MODE           truecolor | ansi256（默认） | mono\n"
-        "  --gamma N              亮度伽马（默认 0.85，越小越亮）\n"
-        "  --gain N               颜色增益（默认 1.0）\n"
-        "  --invert               反转明暗\n"
-        "  --no-audio             关闭声音（纯音频仍显示频谱）\n"
-        "  --start SEC            从指定时间开始，支持 1:23.5\n"
-        "  --duration SEC         只播放/导出指定时长\n"
-        "  --loop                 循环播放\n"
-        "  --init PATH            .m4s/fMP4 的初始化分片 init_0.mp4\n"
-        "  --audio PATH           使用单独音轨；也可给 JSON 场景配同步声音\n"
-        "  --audio-init PATH      单独音轨 .m4s 的初始化分片\n"
-        "  --export-json PATH     导出可离线回放的彩色 JSON 场景\n"
-        "  --play-json PATH       回放 JSON 场景\n"
-        "  --full                 使用终端全部行列（默认最多 300 列，性能优先）\n"
-        "  --no-wt                不自动切换到 Windows Terminal\n"
-        "  --plain                无光标控制、无颜色（便于重定向）\n"
-        "  --no-alt-screen        不使用备用屏幕\n"
-        "  --stats                显示实际帧率、丢帧数与绘制耗时\n"
-        "  --max-frames N         只渲染 N 帧（调试/截图）\n"
-        "  -h, --help             显示帮助\n"
-        "  -v, --version          显示版本\n"
-        "\n"
-        "示例:\n"
-        "  ASCIIPlayer.exe movie.mp4\n"
-        "  ASCIIPlayer.exe movie.mp4 --width 100 --chars \" .:-=+*#%@\"\n"
-        "  ASCIIPlayer.exe music.m4a --color truecolor\n"
-        "  ASCIIPlayer.exe clip.m4s --init init_0.mp4 --audio audio.m4a\n"
-        "  ASCIIPlayer.exe movie.mp4 --export-json movie.json --fps 24\n"
-        "  ASCIIPlayer.exe --play-json movie.json\n"
-        "  ASCIIPlayer.exe --play-json movie.json --audio movie.mp4\n"
-        "\n"
-        "播放中按 Q / Esc 退出。也可以把媒体文件直接拖到 exe 上。\n"
-        "\n"
-        "提示：传统控制台会自动用 Windows Terminal 重新打开（--no-wt 关闭）。\n"
+        "\n提示：传统控制台会自动用 Windows Terminal 重新打开（--no-wt 关闭）。\n"
         "Bilibili 的 .m4s 视频/音频开头多余字节会自动跳过；没有音轨时会自动找同目录音轨。\n";
+#else
+    std::cout <<
+        "\n提示：需要 ffmpeg 在 PATH 中，或设置 FFMPEG_PATH。\n"
+        "Linux 音频通过 paplay / pw-play / aplay / ffplay / mpv 播放；"
+        "没有可用的播放命令时会自动静音。\n"
+        "Bilibili 的 .m4s 视频/音频开头多余字节会自动跳过；"
+        "没有音轨时会自动找同目录音轨。\n";
+#endif
 }
 
 std::string trimPathInput(std::string text) {
@@ -344,16 +392,16 @@ Options parseOptions(const std::vector<std::string>& args) {
             } else if (key == "--duration") {
                 options.duration = parseTime(takeValue(), key);
             } else if (key == "--init") {
-                options.init = fs::path(utf8ToWide(takeValue()));
+                options.init = pathFromUtf8(takeValue());
             } else if (key == "--audio") {
-                options.audioInput = fs::path(utf8ToWide(takeValue()));
+                options.audioInput = pathFromUtf8(takeValue());
             } else if (key == "--audio-init") {
-                options.audioInit = fs::path(utf8ToWide(takeValue()));
+                options.audioInit = pathFromUtf8(takeValue());
             } else if (key == "--export-json") {
-                options.exportJson = fs::path(utf8ToWide(takeValue()));
+                options.exportJson = pathFromUtf8(takeValue());
                 options.exportMode = true;
             } else if (key == "--play-json") {
-                options.jsonFile = fs::path(utf8ToWide(takeValue()));
+                options.jsonFile = pathFromUtf8(takeValue());
                 options.playJsonMode = true;
             } else if (key == "--max-frames") {
                 options.maxFrames = parseInt(takeValue(), key);
@@ -400,7 +448,7 @@ Options parseOptions(const std::vector<std::string>& args) {
     if (options.playJsonMode && options.rawInput.empty() && !options.jsonFile.empty())
         options.input.clear();
     if (!options.rawInput.empty()) {
-        options.input = fs::path(utf8ToWide(options.rawInput));
+        options.input = pathFromUtf8(options.rawInput);
         if (!options.playJsonMode && endsWithI(options.rawInput, ".json")) {
             options.playJsonMode = true;
             options.jsonFile = options.input;
@@ -424,7 +472,7 @@ Options parseOptions(const std::vector<std::string>& args) {
     if (options.maxFrames < 0) options.maxFrames = 0;
     validateCharset(options.charset);
     if (options.exportMode && options.exportJson.extension().empty())
-        options.exportJson += L".json";
+        options.exportJson += ".json";
     return options;
 }
 
@@ -585,7 +633,7 @@ TempFile extractAudio(const FFmpeg& ffmpeg, const InputSpec& input, double start
     args.push_back(input.ffmpegInput());
     args.insert(args.end(), {L"-map", L"0:a:0", L"-vn", L"-ac", L"2",
                              L"-ar", L"48000", L"-c:a", L"pcm_s16le", L"-f", L"wav"});
-    args.push_back(file.path().wstring());
+    args.push_back(pathToWide(file.path()));
     ProcessResult result = ffmpeg.runQuiet(args);
     std::error_code ec;
     check(result.started, result.errors);
@@ -852,7 +900,7 @@ std::wstring lowerWide(std::wstring text) {
 }
 
 bool audioCandidateExtension(const fs::path& path) {
-    std::wstring ext = lowerWide(path.extension().wstring());
+    std::wstring ext = lowerWide(pathToWide(path.extension()));
     return ext == L".m4a" || ext == L".aac" || ext == L".mp3" || ext == L".flac" ||
            ext == L".wav" || ext == L".ogg" || ext == L".opus" || ext == L".m4s" ||
            ext == L".mp4" || ext == L".mkv" || ext == L".webm" || ext == L".mov";
@@ -862,7 +910,7 @@ int companionScore(const fs::path& file, const fs::path& video,
                    const std::wstring& baseId) {
     std::error_code ec;
     if (fs::equivalent(file, video, ec)) return -1000;
-    std::wstring name = lowerWide(file.filename().wstring());
+    std::wstring name = lowerWide(pathToWide(file.filename()));
     int score = 0;
     if (!baseId.empty()) {
         if (name.find(baseId) == std::wstring::npos) return -1000;
@@ -884,7 +932,7 @@ int companionScore(const fs::path& file, const fs::path& video,
         name.find(L"30080") != std::wstring::npos ||
         name.find(L"30077") != std::wstring::npos)
         score -= 120;
-    std::wstring ext = lowerWide(file.extension().wstring());
+    std::wstring ext = lowerWide(pathToWide(file.extension()));
     if (ext == L".m4a" || ext == L".aac" || ext == L".mp3" || ext == L".flac" ||
         ext == L".wav" || ext == L".ogg" || ext == L".opus")
         score += 30;
@@ -954,9 +1002,9 @@ std::optional<CompanionAudio> findCompanionAudio(const fs::path& video,
                                                  const FFmpeg& ffmpeg) {
     fs::path directory = video.parent_path();
     if (directory.empty()) directory = L".";
-    std::wstring baseId = leadingDigits(video.stem().wstring());
+    std::wstring baseId = leadingDigits(pathToWide(video.stem()));
     if (baseId.size() < 3)
-        baseId = leadingDigits(video.parent_path().filename().wstring());
+        baseId = leadingDigits(pathToWide(video.parent_path().filename()));
 
     struct Ranked {
         int score;
@@ -1045,7 +1093,7 @@ int exportJson(const Options& options, const InputSpec& input, const MediaInfo& 
               << std::fixed << std::setprecision(1) << fps << " fps\n";
 
     auto progress = [&](int frames, double timeSeconds) {
-        if (_isatty(_fileno(stderr))) {
+        if (stderrIsTty()) {
             std::fprintf(stderr, "\r  %d frames  %.1fs", frames, timeSeconds);
             std::fflush(stderr);
         } else if (frames > 0 && frames % 150 == 0) {
@@ -1114,7 +1162,7 @@ int exportJson(const Options& options, const InputSpec& input, const MediaInfo& 
     }
     writer.finish();
 
-    if (_isatty(_fileno(stderr))) std::fprintf(stderr, "\n");
+    if (stderrIsTty()) std::fprintf(stderr, "\n");
     check(framesWritten > 0, "No frames were exported.");
     std::error_code ec;
     fs::path absolute = fs::absolute(options.exportJson, ec);
@@ -1123,7 +1171,7 @@ int exportJson(const Options& options, const InputSpec& input, const MediaInfo& 
               << "  frames: " << framesWritten << "  grid: " << grid.width << "x"
               << grid.height << "  fps: " << static_cast<int>(std::lround(fps))
               << "  size: " << formatSize(fs::file_size(options.exportJson, ec)) << "\n"
-              << "  play: ASCIIPlayer.exe --play-json \""
+              << "  play: " << programName() << " --play-json \""
               << pathToUtf8(absolute) << "\"\n";
     if (!warning.empty()) stderrLine("Note: " + warning);
     return 0;
@@ -1393,6 +1441,8 @@ int run(const Options& options) {
 }  // namespace
 }  // namespace ap
 
+#ifdef _WIN32
+
 int wmain(int argc, wchar_t** argv) {
     SetConsoleOutputCP(CP_UTF8);
     SetConsoleCP(CP_UTF8);
@@ -1407,12 +1457,12 @@ int wmain(int argc, wchar_t** argv) {
         for (int i = 0; i < argc; ++i) args.push_back(ap::wideToUtf8(argv[i]));
         bool interactive = false;
         if (args.size() == 1) {
-            if (_isatty(_fileno(stdin)) && ap::canAutoLaunchWindowsTerminal() &&
+            if (ap::stdinIsTty() && ap::canAutoLaunchWindowsTerminal() &&
                 ap::launchInWindowsTerminal(argc, argv)) {
                 return 0;
             }
             ap::printBanner();
-            if (!_isatty(_fileno(stdin))) {
+            if (!ap::stdinIsTty()) {
                 ap::printHelp();
                 return 1;
             }
@@ -1440,7 +1490,7 @@ int wmain(int argc, wchar_t** argv) {
         return result;
     } catch (const std::exception& e) {
         std::cerr << "\nError: " << e.what() << "\n";
-        if (argc <= 1 && _isatty(_fileno(stdin))) {
+        if (argc <= 1 && ap::stdinIsTty()) {
             std::cerr << "按 Enter 退出 ..." << std::flush;
             std::string dummy;
             std::getline(std::cin, dummy);
@@ -1448,3 +1498,51 @@ int wmain(int argc, wchar_t** argv) {
         return 1;
     }
 }
+
+#else
+
+int main(int argc, char** argv) {
+    std::signal(SIGINT, ap::posixSignalHandler);
+    std::signal(SIGTERM, ap::posixSignalHandler);
+    std::signal(SIGPIPE, SIG_IGN);
+
+    try {
+        std::vector<std::string> args;
+        args.reserve(static_cast<size_t>(argc));
+        for (int i = 0; i < argc; ++i) args.emplace_back(argv[i]);
+        bool interactive = false;
+        if (args.size() == 1) {
+            ap::printBanner();
+            if (!ap::stdinIsTty()) {
+                ap::printHelp();
+                return 1;
+            }
+            std::cout << "输入媒体文件路径，然后回车：\n> " << std::flush;
+            std::string line;
+            if (!std::getline(std::cin, line) || ap::trim(line).empty()) {
+                ap::printHelp();
+                return 1;
+            }
+            args.push_back(ap::trimPathInput(line));
+            interactive = true;
+        }
+        ap::Options options = ap::parseOptions(args);
+        int result = ap::run(options);
+        if (interactive) {
+            std::cout << "\n按 Enter 退出 ..." << std::flush;
+            std::string dummy;
+            std::getline(std::cin, dummy);
+        }
+        return result;
+    } catch (const std::exception& e) {
+        std::cerr << "\nError: " << e.what() << "\n";
+        if (argc <= 1 && ap::stdinIsTty()) {
+            std::cerr << "按 Enter 退出 ..." << std::flush;
+            std::string dummy;
+            std::getline(std::cin, dummy);
+        }
+        return 1;
+    }
+}
+
+#endif

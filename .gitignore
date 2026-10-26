@@ -1,11 +1,14 @@
 build/
+build-linux/
 build-cmake/
 dist/
+dist-linux/
 *.obj
 *.pdb
 *.ilk
 *.log
 *.zip
+*.tar.gz
 out_*.txt
 err_*.txt
 tty_*.txt

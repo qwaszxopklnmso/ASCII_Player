@@ -1,12 +1,17 @@
-// Small Win32 process wrapper used to drive ffmpeg without a shell.
+// Small native process wrapper used to drive ffmpeg without a shell.
 #pragma once
 
 #include "common.h"
 
+#include <cstddef>
 #include <memory>
 #include <string>
 #include <thread>
 #include <vector>
+
+#ifndef _WIN32
+#include <sys/types.h>
+#endif
 
 namespace ap {
 
@@ -29,8 +34,20 @@ public:
     PipeProcess(PipeProcess&& other) noexcept;
     PipeProcess& operator=(PipeProcess&& other) noexcept;
 
-    bool valid() const { return process_ != nullptr; }
-    bool captureStdout() const { return read_ != nullptr; }
+    bool valid() const {
+#ifdef _WIN32
+        return process_ != nullptr;
+#else
+        return process_ > 0;
+#endif
+    }
+    bool captureStdout() const {
+#ifdef _WIN32
+        return read_ != nullptr;
+#else
+        return read_ >= 0;
+#endif
+    }
     size_t read(void* buffer, size_t bytes);
     bool readExact(void* buffer, size_t bytes);
     std::string readAll(size_t limit = 8 * 1024 * 1024);
@@ -46,10 +63,17 @@ private:
 
     void cleanup();
     void joinErrorReader();
+#ifdef _WIN32
     void startErrorReader(HANDLE readHandle);
-
     HANDLE process_ = nullptr;
     HANDLE read_ = nullptr;
+#else
+    void startErrorReader(int readFd);
+    pid_t process_ = -1;
+    int read_ = -1;
+    mutable bool exited_ = false;
+    mutable int status_ = 0;
+#endif
     std::unique_ptr<std::thread> errorThread_;
     std::shared_ptr<ErrorState> errorState_;
 };

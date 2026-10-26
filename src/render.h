@@ -3,8 +3,13 @@
 #include "audio.h"
 #include "common.h"
 
+#include <algorithm>
 #include <string>
 #include <vector>
+
+#ifndef _WIN32
+#include <termios.h>
+#endif
 
 namespace ap {
 
@@ -88,8 +93,15 @@ private:
     std::string colorSequence(RGB color, ColorMode mode, int& lastKey);
     void write(const std::string& text);
 
+#ifdef _WIN32
     HANDLE out_ = INVALID_HANDLE_VALUE;
     DWORD originalMode_ = 0;
+#else
+    int outFd_ = 1;
+    struct termios original_{};
+    bool rawMode_ = false;
+    int stdinFd_ = 0;
+#endif
     bool tty_ = false;
     bool plain_ = false;
     bool altScreen_ = false;

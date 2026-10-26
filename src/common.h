@@ -1,6 +1,7 @@
-// ASCII Player - shared Windows/UTF-8 helpers.
+// ASCII Player - shared platform/UTF-8 helpers.
 #pragma once
 
+#ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -8,6 +9,7 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#endif
 
 #include <cstdint>
 #include <filesystem>
@@ -41,11 +43,19 @@ std::string formatDuration(double seconds);
 std::string formatSize(uint64_t bytes);
 std::string basenameUtf8(const fs::path& path);
 
+#ifdef _WIN32
 // Windows argument quoting for CreateProcessW command lines.
 std::wstring quoteWindowsArg(const std::wstring& arg);
+#endif
 
 std::wstring pathToWide(const fs::path& p);
 std::string pathToUtf8(const fs::path& p);
+fs::path pathFromUtf8(const std::string& text);
+
+// Returns a full executable path when `name` is found in PATH, otherwise empty.
+fs::path findInPath(const std::wstring& name);
+bool isExecutableFile(const fs::path& path);
+const char* programName();
 
 class TempFile {
 public:

@@ -53,7 +53,11 @@ std::string jsonEscape(const std::string& text) {
 std::string timeStamp() {
     std::time_t now = std::time(nullptr);
     std::tm local{};
+#ifdef _WIN32
     localtime_s(&local, &now);
+#else
+    localtime_r(&now, &local);
+#endif
     char buffer[64];
     std::strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%S", &local);
     return buffer;

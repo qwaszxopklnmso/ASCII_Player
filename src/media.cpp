@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <regex>
 #include <sstream>
 
@@ -10,30 +11,16 @@ namespace ap {
 
 namespace {
 
-std::wstring joinArgs(const std::vector<std::wstring>& args) {
-    std::wstring out;
-    for (const auto& a : args) {
-        if (!out.empty()) out.push_back(L' ');
-        out += quoteWindowsArg(a);
-    }
-    return out;
-}
-
 std::string tail(const std::string& text, size_t maxBytes) {
     if (text.size() <= maxBytes) return text;
     return "..." + text.substr(text.size() - maxBytes);
 }
 
-bool fileExists(const fs::path& path) {
-    std::error_code ec;
-    return !path.empty() && fs::is_regular_file(path, ec);
-}
-
 }  // namespace
 
 std::wstring InputSpec::ffmpegInput() const {
-    if (!isConcat()) return path.wstring();
-    return L"concat:" + init.wstring() + L"|" + path.wstring();
+    if (!isConcat()) return pathToWide(path);
+    return L"concat:" + pathToWide(init) + L"|" + pathToWide(path);
 }
 
 std::string InputSpec::display() const {
@@ -56,43 +43,62 @@ std::wstring intArg(int value) {
 
 FFmpeg FFmpeg::locate() {
     std::vector<fs::path> candidates;
+#ifdef _WIN32
+    const fs::path ffmpegName(L"ffmpeg.exe");
+#else
+    const fs::path ffmpegName("ffmpeg");
+#endif
     fs::path dir = exeDir();
-    candidates.push_back(dir / L"ffmpeg.exe");
-    candidates.push_back(dir / L"bin" / L"ffmpeg.exe");
-    candidates.push_back(dir / L"tools" / L"ffmpeg.exe");
+    candidates.push_back(dir / ffmpegName);
+    candidates.push_back(dir / "bin" / ffmpegName);
+    candidates.push_back(dir / "tools" / ffmpegName);
     if (dir.has_parent_path()) {
-        candidates.push_back(dir.parent_path() / L"ffmpeg.exe");
-        candidates.push_back(dir.parent_path() / L"bin" / L"ffmpeg.exe");
+        candidates.push_back(dir.parent_path() / ffmpegName);
+        candidates.push_back(dir.parent_path() / "bin" / ffmpegName);
     }
-    candidates.push_back(currentDir() / L"ffmpeg.exe");
+    candidates.push_back(currentDir() / ffmpegName);
 
+#ifdef _WIN32
     wchar_t envPath[32768];
     DWORD n = GetEnvironmentVariableW(L"FFMPEG_PATH", envPath,
                                       static_cast<DWORD>(std::size(envPath)));
     if (n > 0 && n < std::size(envPath)) {
         fs::path p(envPath);
-        if (fs::is_directory(p)) p /= L"ffmpeg.exe";
+        if (fs::is_directory(p)) p /= ffmpegName;
         candidates.push_back(p);
     }
-
-    wchar_t found[32768];
-    DWORD foundLen = SearchPathW(nullptr, L"ffmpeg.exe", nullptr,
-                                 static_cast<DWORD>(std::size(found)), found, nullptr);
-    if (foundLen > 0 && foundLen < std::size(found)) {
-        candidates.emplace_back(std::wstring(found, foundLen));
+#else
+    const char* env = std::getenv("FFMPEG_PATH");
+    if (env && *env) {
+        fs::path p(env);
+        std::error_code ec;
+        if (fs::is_directory(p, ec)) p /= ffmpegName;
+        candidates.push_back(p);
     }
+#endif
+
+    fs::path inPath = findInPath(ffmpegName.wstring());
+    if (!inPath.empty()) candidates.push_back(inPath);
 
     for (const auto& candidate : candidates) {
         std::error_code ec;
         fs::path absolute = fs::absolute(candidate, ec);
         if (ec) absolute = candidate;
-        if (fileExists(absolute)) return FFmpeg(absolute);
+        if (isExecutableFile(absolute)) return FFmpeg(absolute);
     }
 
+#ifdef _WIN32
     throw std::runtime_error(
         "ffmpeg.exe was not found.\n"
         "Put ffmpeg.exe next to ASCIIPlayer.exe, or add its folder to PATH.\n"
         "Download: https://www.gyan.dev/ffmpeg/builds/");
+#else
+    throw std::runtime_error(
+        "ffmpeg was not found.\n"
+        "Install it with your package manager, put it next to ASCII Player, "
+        "or set FFMPEG_PATH.\n"
+        "Ubuntu / WSL: sudo apt install ffmpeg");
+#endif
 }
 
 MediaInfo FFmpeg::probe(const InputSpec& input) const {
@@ -173,8 +179,9 @@ MediaInfo FFmpeg::probe(const InputSpec& input) const {
         std::string hint;
         if (endsWithI(pathToUtf8(input.path), ".m4s") && input.init.empty()) {
             hint =
-                "\nThis looks like a DASH/fMP4 media segment. It needs its init segment:\n"
-                "  ASCIIPlayer.exe segment.m4s --init init_0.mp4\n"
+                "\nThis looks like a DASH/fMP4 media segment. It needs its init segment:\n  " +
+                std::string(programName()) +
+                " segment.m4s --init init_0.mp4\n"
                 "Or pass a separate audio file with --audio audio.m4a.";
         }
         throw std::runtime_error("ffmpeg could not find an audio or video stream.\n" +

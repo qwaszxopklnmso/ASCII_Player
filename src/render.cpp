@@ -3,11 +3,18 @@
 #include <algorithm>
 #include <cmath>
 #include <complex>
-#include <conio.h>
 #include <cstdio>
 #include <cstdlib>
-#include <io.h>
 #include <cstring>
+
+#ifdef _WIN32
+#include <conio.h>
+#include <io.h>
+#else
+#include <cerrno>
+#include <sys/ioctl.h>
+#include <unistd.h>
+#endif
 
 namespace ap {
 
@@ -155,6 +162,8 @@ AsciiFrame renderRgbFrame(const uint8_t* rgb, int width, int height, int stride,
     return frame;
 }
 
+#ifdef _WIN32
+
 Terminal::Terminal(bool plain, bool altScreen)
     : plain_(plain), altScreen_(altScreen) {
     out_ = GetStdHandle(STD_OUTPUT_HANDLE);
@@ -238,6 +247,90 @@ void Terminal::write(const std::string& text) {
     }
 }
 
+#else
+
+Terminal::Terminal(bool plain, bool altScreen)
+    : plain_(plain), altScreen_(altScreen) {
+    stdinFd_ = STDIN_FILENO;
+    outFd_ = STDOUT_FILENO;
+    tty_ = isatty(outFd_) != 0 && isatty(stdinFd_) != 0;
+
+    struct winsize size {};
+    if (tty_ && ioctl(outFd_, TIOCGWINSZ, &size) == 0 && size.ws_col > 0) {
+        width_ = std::clamp(static_cast<int>(size.ws_col) - 1, 20, 500);
+        height_ = std::clamp(static_cast<int>(size.ws_row), 8, 250);
+    }
+    if (const char* columns = std::getenv("COLUMNS")) {
+        int value = std::atoi(columns);
+        if (value >= 20) width_ = std::clamp(value - 1, 20, 500);
+    }
+    if (const char* lines = std::getenv("LINES")) {
+        int value = std::atoi(lines);
+        if (value >= 8) height_ = std::clamp(value, 8, 250);
+    }
+    if (!tty_) {
+        width_ = std::min(width_, 180);
+        height_ = std::min(height_, 60);
+    }
+}
+
+Terminal::~Terminal() {
+    leave();
+}
+
+void Terminal::enter() {
+    if (plain_ || !tty_ || entered_) return;
+    entered_ = true;
+    if (tcgetattr(stdinFd_, &original_) == 0) {
+        struct termios raw = original_;
+        raw.c_lflag &= static_cast<tcflag_t>(~(ICANON | ECHO));
+        raw.c_cc[VMIN] = 0;
+        raw.c_cc[VTIME] = 0;
+        if (tcsetattr(stdinFd_, TCSANOW, &raw) == 0) rawMode_ = true;
+    }
+    if (altScreen_) {
+        write("\x1b[?1049h\x1b[?25l\x1b[2J\x1b[H\x1b[40m");
+    } else {
+        write("\x1b[2J\x1b[H\x1b[?25l\x1b[40m");
+    }
+}
+
+void Terminal::leave() {
+    if (entered_) {
+        if (altScreen_) {
+            write("\x1b[0m\x1b[?25h\x1b[?1049l");
+        } else {
+            write("\x1b[0m\x1b[?25h\n");
+        }
+        entered_ = false;
+    }
+    if (rawMode_) {
+        tcsetattr(stdinFd_, TCSANOW, &original_);
+        rawMode_ = false;
+    }
+}
+
+void Terminal::clear() {
+    if (plain_ || !tty_) return;
+    write("\x1b[2J\x1b[H");
+}
+
+void Terminal::write(const std::string& text) {
+    if (text.empty() || outFd_ < 0) return;
+    size_t done = 0;
+    while (done < text.size()) {
+        ssize_t written = ::write(outFd_, text.data() + done, text.size() - done);
+        if (written < 0) {
+            if (errno == EINTR) continue;
+            break;
+        }
+        if (written == 0) break;
+        done += static_cast<size_t>(written);
+    }
+}
+
+#endif
+
 std::string Terminal::colorSequence(RGB color, ColorMode mode, int& lastKey) {
     if (mode == ColorMode::Mono) return {};
     int key;
@@ -316,12 +409,30 @@ void Terminal::draw(const AsciiFrame& frame, const std::string& status, ColorMod
 
 bool Terminal::quitRequested() const {
     if (!tty_) return false;
+#ifdef _WIN32
     bool quit = false;
     while (_kbhit()) {
         int c = _getch();
         if (c == 27 || c == 'q' || c == 'Q') quit = true;
     }
     return quit;
+#else
+    bool quit = false;
+    unsigned char buffer[64];
+    while (true) {
+        ssize_t got = ::read(stdinFd_, buffer, sizeof(buffer));
+        if (got > 0) {
+            for (ssize_t i = 0; i < got; ++i) {
+                unsigned char c = buffer[i];
+                if (c == 27 || c == 'q' || c == 'Q' || c == 3) quit = true;
+            }
+            continue;
+        }
+        if (got < 0 && errno == EINTR) continue;
+        break;
+    }
+    return quit;
+#endif
 }
 
 AudioVisualizer::AudioVisualizer(const WavData& audio, std::string title)
