@@ -204,7 +204,7 @@ ProcessResult FFmpeg::runQuiet(const std::vector<std::wstring>& args) const {
 
 VideoStream::VideoStream(const FFmpeg& ffmpeg, const InputSpec& input, int outWidth,
                          int outHeight, double fps, double startSeconds,
-                         double durationSeconds)
+                         double durationSeconds, int rotate)
     : frameBytes_(static_cast<size_t>(outWidth) * static_cast<size_t>(outHeight) * 3) {
     std::vector<std::wstring> args = {L"-hide_banner", L"-loglevel", L"error",
                                       L"-nostdin"};
@@ -218,11 +218,19 @@ VideoStream::VideoStream(const FFmpeg& ffmpeg, const InputSpec& input, int outWi
     }
     args.push_back(L"-i");
     args.push_back(input.ffmpegInput());
+    std::wstring filter;
+    if (rotate == 90) {
+        filter = L"transpose=1,";
+    } else if (rotate == 180) {
+        filter = L"transpose=1,transpose=1,";
+    } else if (rotate == 270) {
+        filter = L"transpose=2,";
+    }
+    filter += L"scale=" + std::to_wstring(outWidth) + L":" +
+              std::to_wstring(outHeight) + L":flags=area";
     args.insert(args.end(), {L"-map", L"0:v:0", L"-an", L"-sn", L"-dn", L"-vf",
-                             L"scale=" + std::to_wstring(outWidth) + L":" +
-                                 std::to_wstring(outHeight) + L":flags=area",
-                             L"-fps_mode", L"cfr", L"-r", numberArg(fps), L"-f",
-                             L"rawvideo", L"-pix_fmt", L"rgb24", L"pipe:1"});
+                             filter, L"-fps_mode", L"cfr", L"-r", numberArg(fps),
+                             L"-f", L"rawvideo", L"-pix_fmt", L"rgb24", L"pipe:1"});
     process_ = std::make_unique<PipeProcess>(ffmpeg.path(), args, true, false);
 }
 

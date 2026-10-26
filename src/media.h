@@ -47,7 +47,8 @@ private:
 class VideoStream {
 public:
     VideoStream(const FFmpeg& ffmpeg, const InputSpec& input, int outWidth, int outHeight,
-                double fps, double startSeconds, double durationSeconds);
+                double fps, double startSeconds, double durationSeconds,
+                int rotate = 0);
     ~VideoStream();
 
     bool next(std::vector<uint8_t>& frame);

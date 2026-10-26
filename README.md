@@ -213,6 +213,8 @@ ASCIIPlayer.exe movie.mp4 --chars " .:-=+*#%@"
 | --- | --- |
 | `--width N` | 字符列数；默认适配终端 |
 | `--height N` | 字符行数；默认按宽高比计算 |
+| `--rotate 90\|180\|270` | 画面顺时针旋转，配合网格比例一起生效 |
+| `--landscape` | 等同 `--rotate 90`，手机竖屏时横过来看 |
 | `--chars " .#%@"` | 自定义从疏到密的字符表；默认约 95 个字符 |
 | `--fps N` | 播放/导出帧率，默认源帧率，上限 30 |
 | `--color truecolor\|ansi256\|mono` | 颜色模式，默认 `ansi256` |
@@ -242,6 +244,7 @@ ASCIIPlayer.exe movie.mp4 --chars " .:-=+*#%@"
 
 - 默认最多 300 列 / 150 行，避免超大网格把终端拖慢。
 - 想要用满终端：`--full`；也可以 `--width 400 --height 112`。
+- 手机竖屏想看横屏视频：`--landscape`（`--rotate 90`），网格会按旋转后的比例计算，再把手机横过来看。
 - 如果 300×84 仍然卡，优先让程序自动进入 Windows Terminal（默认行为），或者手动：
   ```powershell
   ASCIIPlayer.exe movie.mp4 --width 160 --fps 24 --color ansi256

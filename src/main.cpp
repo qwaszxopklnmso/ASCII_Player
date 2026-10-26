@@ -41,7 +41,7 @@
 namespace ap {
 namespace {
 
-constexpr const char* kVersion = "1.2.1";
+constexpr const char* kVersion = "1.3.0";
 std::atomic<bool> g_stop{false};
 
 #ifdef _WIN32
@@ -180,6 +180,7 @@ struct Options {
     bool full = false;
     int width = 0;
     int height = 0;
+    int rotate = 0;
     double fps = 0.0;
     double start = 0.0;
     double duration = 0.0;
@@ -217,6 +218,8 @@ void printHelp() {
 常用选项:
   --width N              ASCII 宽度（列），默认自动适配终端
   --height N             ASCII 高度（行），默认按画面比例计算
+  --rotate N             画面旋转 90 / 180 / 270 度（顺时针）
+  --landscape            等同 --rotate 90，竖屏终端里横过来看
   --chars STR            自定义由疏到密的字符表（默认含符号、数字、大小写字母）
   --fps N                播放/导出帧率（默认源帧率，最高 30）
   --color MODE           truecolor | ansi256（默认） | mono
@@ -367,6 +370,10 @@ Options parseOptions(const std::vector<std::string>& args) {
                 options.width = parseInt(takeValue(), key);
             } else if (key == "--height") {
                 options.height = parseInt(takeValue(), key);
+            } else if (key == "--rotate") {
+                options.rotate = parseInt(takeValue(), key);
+            } else if (key == "--landscape") {
+                options.rotate = 90;
             } else if (key == "--fps") {
                 options.fps = parseDouble(takeValue(), key);
             } else if (key == "--chars" || key == "--charset") {
@@ -465,6 +472,9 @@ Options parseOptions(const std::vector<std::string>& args) {
         check(options.width >= 10 && options.width <= 500, "--width must be 10..500.");
     if (options.height != 0)
         check(options.height >= 4 && options.height <= 250, "--height must be 4..250.");
+    check(options.rotate == 0 || options.rotate == 90 || options.rotate == 180 ||
+              options.rotate == 270,
+          "--rotate must be 90, 180, or 270.");
     if (options.fps != 0.0) check(options.fps >= 1.0 && options.fps <= 120.0,
                                  "--fps must be 1..120.");
     check(options.gamma >= 0.1 && options.gamma <= 5.0, "--gamma must be 0.1..5.0.");
@@ -530,10 +540,15 @@ std::string errorTail(const std::string& text, size_t maxBytes = 1200) {
     return cleaned;
 }
 
+void applyUserRotation(int& width, int& height, int rotate) {
+    if (rotate % 180 == 90) std::swap(width, height);
+}
+
 Grid videoGrid(const Options& options, const Terminal& terminal, const MediaInfo& info) {
     int displayWidth = info.width;
     int displayHeight = info.height;
     if (std::abs(info.rotation) % 180 == 90) std::swap(displayWidth, displayHeight);
+    applyUserRotation(displayWidth, displayHeight, options.rotate);
     if (displayWidth <= 0 || displayHeight <= 0) {
         displayWidth = 16;
         displayHeight = 9;
@@ -593,6 +608,7 @@ Grid exportGrid(const Options& options, const MediaInfo& info, bool audioOnly) {
     int displayWidth = info.width;
     int displayHeight = info.height;
     if (std::abs(info.rotation) % 180 == 90) std::swap(displayWidth, displayHeight);
+    applyUserRotation(displayWidth, displayHeight, options.rotate);
     if (displayWidth <= 0 || displayHeight <= 0) {
         displayWidth = 16;
         displayHeight = 9;
@@ -1121,7 +1137,8 @@ int exportJson(const Options& options, const InputSpec& input, const MediaInfo& 
         }
     } else {
         auto video = std::make_unique<VideoStream>(ffmpeg, input, grid.width, grid.height,
-                                                   fps, options.start, options.duration);
+                                                   fps, options.start, options.duration,
+                                                   options.rotate);
         std::vector<uint8_t> rgb;
         int frameIndex = 0;
         bool reachedEof = false;
@@ -1278,7 +1295,7 @@ int playMedia(const Options& options, const InputSpec& input, const MediaInfo& i
         } else {
             auto video = std::make_unique<VideoStream>(
                 ffmpeg, input, grid.width, grid.height, fps, options.start,
-                options.duration);
+                options.duration, options.rotate);
             std::vector<uint8_t> rgb;
             if (!video->next(rgb)) {
                 int code = video->finish();
